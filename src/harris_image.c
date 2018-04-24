@@ -7,6 +7,14 @@
 #include "matrix.h"
 #include <time.h>
 
+#define FOREACH_PIXEL(W, H, FUNC) \
+for (int j = 0; j < H; ++j) { \
+    for (int i = 0; i < W; ++i)  \
+        FUNC \
+} \
+
+#define SQUARE(X) ((X) * (X))
+
 // Frees an array of descriptors.
 // descriptor *d: the array.
 // int n: number of elements in array.
@@ -84,7 +92,15 @@ void mark_corners(image im, descriptor *d, int n)
 image make_1d_gaussian(float sigma)
 {
     // TODO: optional, make separable 1d Gaussian.
-    return make_image(1,1,1);
+    int w = (int)ceil(6 * sigma);
+    w = w & 1 ? w : w + 1;
+    int center = w / 2;
+    image img = make_image(w, 1, 1);
+    for (int i = 0; i < w; ++i) {
+        // without multiplying 1 / (TWOPI * SQUARE(sigma))
+        set_pixel(img, i, 0, 0, exp(-SQUARE(i - center) / (2 * SQUARE(sigma))));
+    }
+    return img;
 }
 
 // Smooths an image using separable Gaussian filter.
@@ -101,7 +117,18 @@ image smooth_image(image im, float sigma)
     } else {
         // TODO: optional, use two convolutions with 1d gaussian filter.
         // If you implement, disable the above if check.
-        return copy_image(im);
+        image g = make_1d_gaussian(sigma);
+        image s1 = convolve_image(im, g, 1);
+        g.h = g.w;
+        g.w = 1;
+        image s2 = convolve_image(s1, g, 1);
+        double k = 1 / (TWOPI * SQUARE(sigma));
+        for (int i = 0; i < s1.w * s1.h; ++i) {
+            s1.data[i] *= k;
+        }
+        free_image(g);
+        free_image(s1);
+        return s2;
     }
 }
 
@@ -114,7 +141,24 @@ image structure_matrix(image im, float sigma)
 {
     image S = make_image(im.w, im.h, 3);
     // TODO: calculate structure matrix for im.
-    return S;
+    image gx = make_gx_filter();
+    image gy = make_gy_filter();
+    image ix = convolve_image(im, gx, 0);
+    image iy = convolve_image(im, gy, 0);
+    free_image(gx);
+    free_image(gy);
+    FOREACH_PIXEL(im.w, im.h, {
+        float x = get_pixel(ix, i, j, 0);
+        float y = get_pixel(iy, i, j, 0);
+        set_pixel(S, i, j, 0, x * x);
+        set_pixel(S, i, j, 1, y * y);
+        set_pixel(S, i, j, 2, x * y);
+    });
+    free_image(ix);
+    free_image(iy);
+    image result = smooth_image(S, sigma);
+    free_image(S);
+    return result;
 }
 
 // Estimate the cornerness of each pixel given a structure matrix S.
@@ -125,6 +169,15 @@ image cornerness_response(image S)
     image R = make_image(S.w, S.h, 1);
     // TODO: fill in R, "cornerness" for each pixel using the structure matrix.
     // We'll use formulation det(S) - alpha * trace(S)^2, alpha = .06.
+    float alpha = 0.06;
+    FOREACH_PIXEL(S.w, S.h, {
+        float xx = get_pixel(S, i, j, 0);
+        float yy = get_pixel(S, i, j, 1);
+        float xy = get_pixel(S, i, j, 2);
+        float det = xx * yy - xy * xy;
+        float trace = xx + yy;
+        set_pixel(R, i, j, 0, det - alpha * trace * trace);
+    });
     return R;
 }
 
@@ -140,6 +193,22 @@ image nms_image(image im, int w)
     //     for neighbors within w:
     //         if neighbor response greater than pixel response:
     //             set response to be very low (I use -999999 [why not 0??])
+    int width = 2 * w + 1;
+    int center_x = w;
+    int center_y = w;
+    FOREACH_PIXEL(r.w, r.h, {
+        int cur_i = i;
+        int cur_j = j;
+        float pixel = get_pixel(im, cur_i, cur_j, 0);
+        FOREACH_PIXEL(width, width, {
+            if (get_pixel(im, cur_i - (center_x - i), cur_j - (center_y - j), 0) > pixel) {
+                set_pixel(r, cur_i, cur_j, 0, -999999);
+                goto suppressed;
+            }
+        });
+suppressed:
+        ;
+    });
     return r;
 }
 
@@ -161,15 +230,32 @@ descriptor *harris_corner_detector(image im, float sigma, float thresh, int nms,
     // Run NMS on the responses
     image Rnms = nms_image(R, nms);
 
-
     //TODO: count number of responses over threshold
-    int count = 1; // change this
-
+    int count = 0; // change this
+    int capacity = 64;
+    int* arr = (int*)malloc(capacity * sizeof(int));
+    FOREACH_PIXEL(Rnms.w, Rnms.h, {
+        if (get_pixel(Rnms, i, j, 0) >= thresh) {
+            ++count;
+            if (count > capacity) {
+                capacity <<= 1;
+                int* new_arr = (int*)malloc(capacity * sizeof(int));
+                memcpy(new_arr, arr, (capacity >> 1) * sizeof(int));
+                free(arr);
+                arr = new_arr;
+            }
+            arr[count - 1] = i + j * Rnms.w;
+        }
+    });
     
     *n = count; // <- set *n equal to number of corners in image.
     descriptor *d = calloc(count, sizeof(descriptor));
     //TODO: fill in array *d with descriptors of corners, use describe_index.
-
+    descriptor *ptr = d;
+    for (int i = 0; i < count; ++i) {
+        *ptr++ = describe_index(im, arr[i]);
+    }
+    free(arr);
 
     free_image(S);
     free_image(R);
