@@ -6,12 +6,6 @@
 #include "image.h"
 #include "matrix.h"
 
-#define FOREACH_PIXEL(IM, FUNC) \
-for (int j = 0; j < IM.h; ++j) { \
-    for (int i = 0; i < IM.w; ++i)  \
-        FUNC \
-} \
-
 #define SQUARE(X) ((X) * (X))
 
 // Comparator for matches
@@ -269,7 +263,7 @@ int model_inliers(matrix H, match *m, int n, float thresh)
         .data = data
     };
     while(count < j) {
-        if (point_distance(project_point_fast(H, m[count].p, mat), m[count].q) <= thresh) {
+        if (point_distance(project_point_fast(H, m[count].p, mat), m[count].q) < thresh) {
             ++count;
         } else {
             match tmp = m[--j];
@@ -301,7 +295,7 @@ void randomize_matches(match *m, int n)
 // returns: matrix representing homography H that maps image a to image b.
 matrix compute_homography(match *matches, int n)
 {
-    matrix M = make_matrix(n*2, 6);
+    matrix M = make_matrix(n*2, 8);
     matrix b = make_matrix(n*2, 1);
 
     int i;
@@ -311,9 +305,11 @@ matrix compute_homography(match *matches, int n)
         double y  = matches[i].p.y;
         double yp = matches[i].q.y;
         // TODO: fill in the matrices M and b.
-        M.data[i * 2][0] = M.data[i * 2 + 1][3] = x;
-        M.data[i * 2][1] = M.data[i * 2 + 1][4] = y;
-        M.data[i * 2][2] = M.data[i * 2 + 1][5] = 1;
+        double arr1[8] = {x, y, 1, 0, 0, 0, -x * xp, -y * xp};
+        double arr2[8] = {0, 0, 0, x, y, 1, -x * yp, -y * yp};
+        memcpy(M.data[i * 2], arr1, sizeof(arr1));
+        memcpy(M.data[i * 2 + 1], arr2, sizeof(arr2));
+        
         b.data[i * 2][0] = xp;
         b.data[i * 2 + 1][0] = yp;
     }
@@ -326,11 +322,9 @@ matrix compute_homography(match *matches, int n)
 
     matrix H = make_matrix(3, 3);
     // TODO: fill in the homography H based on the result in a.
-    assert(a.cols == 1 && a.rows == 6);
-    for (int y = 0; y < 2; ++y) {
-        for (int x = 0; x < 3; ++x) {
-            H.data[y][x] = a.data[y * 3 + x][0];
-        }
+    assert(a.cols == 1 && a.rows == 8);
+    for (i = 0; i < 8; ++i) {
+        H.data[i / 3][i % 3] =a.data[i][0];
     }
     H.data[2][2] = 1;
 
@@ -426,7 +420,7 @@ image combine_images(image a, image b, matrix H)
         for(j = 0; j < a.h; ++j){
             for(i = 0; i < a.w; ++i){
                 // TODO: fill in.
-                set_pixel(c, i + dx, j + dy, k, get_pixel(a, i, j, k));
+                set_pixel(c, i - dx, j - dy, k, get_pixel(a, i, j, k));
             }
         }
     }
@@ -444,12 +438,14 @@ image combine_images(image a, image b, matrix H)
         .data = data
     };
     for (k = 0; k < a.c; ++k) {
-        FOREACH_PIXEL(c, {
-            point p = project_point_fast(H, make_point(i, j), mat);
-            if (p.x >= 0 && p.x < b.w && p.y >= 0 && p.y < b.h) {
-                set_pixel(c, i, j, k, bilinear_interpolate(b, p.x, p.y, k));
+        for (j = topleft.y; j < botright.y; ++j) {
+            for (i = topleft.x; i < botright.x; ++i) {
+                point p = project_point_fast(H, make_point(i, j), mat);
+                if (p.x >= 0 && p.x < b.w && p.y >= 0 && p.y < b.h) {
+                    set_pixel(c, i - dx, j - dy, k, bilinear_interpolate(b, p.x, p.y, k));
+                }
             }
-        });
+        }
     }
     return c;
 }
