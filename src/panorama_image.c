@@ -6,6 +6,12 @@
 #include "image.h"
 #include "matrix.h"
 
+#define FOREACH_PIXEL(IM, FUNC) \
+for (int j = 0; j < IM.h; ++j) { \
+    for (int i = 0; i < IM.w; ++i)  \
+        FUNC \
+} \
+
 #define SQUARE(X) ((X) * (X))
 
 // Comparator for matches
@@ -188,25 +194,20 @@ match *match_descriptors(descriptor *a, int an, descriptor *b, int bn, int *mn)
     return m;
 }
 
-static matrix point_to_matrix(point p, matrix m) {
+static point project_point_fast(matrix H, point p, matrix m)
+{
     assert(m.cols == 1 && m.rows == 3);
+    assert(H.cols == 3 && H.rows == 3);
     m.data[0][0] = p.x;
     m.data[1][0] = p.y;
     m.data[2][0] = 1;
-    return m;
-}
-
-static point matrix_to_point(matrix m) {
-    point p = {
-        .x = m.data[0][0] / m.data[2][0], 
-        .y = m.data[1][0] / m.data[2][0] 
+    matrix n = matrix_mult_matrix(H, m);
+    point r = {
+        .x = n.data[0][0] / n.data[2][0], 
+        .y = n.data[1][0] / n.data[2][0] 
     };
-    return p;
-}
-
-static point project_point_fast(matrix H, point p, matrix m)
-{
-    return matrix_to_point(matrix_mult_matrix(H, point_to_matrix(p, m)));
+    free_matrix(n);
+    return r;
 }
 
 // Apply a projective transformation to a point.
@@ -249,7 +250,6 @@ float point_distance(point p, point q)
 //          so that the inliers are first in the array. For drawing.
 int model_inliers(matrix H, match *m, int n, float thresh)
 {
-    int i;
     int count = 0;
     // TODO: count number of matches that are inliers
     // i.e. distance(H*p, q) < thresh
@@ -341,7 +341,6 @@ matrix compute_homography(match *matches, int n)
 // returns: matrix representing most common homography between matches.
 matrix RANSAC(match *m, int n, float thresh, int k, int cutoff)
 {
-    int e;
     int best = 0;
     matrix Hb = make_translation_homography(256, 0);
     // TODO: fill in RANSAC algorithm.
@@ -354,7 +353,7 @@ matrix RANSAC(match *m, int n, float thresh, int k, int cutoff)
     //         if it's better than the cutoff:
     //             return it immediately
     // if we get to the end return the best homography
-    int fit_num = MAX(MIN(n / 5, cutoff / 2), 5);
+    int fit_num = 4;
     best = model_inliers(Hb, m, n, thresh);
     if (best > cutoff) {
         free_matrix(Hb);
@@ -407,10 +406,10 @@ image combine_images(image a, image b, matrix H)
 
     // Can disable this if you are making very big panoramas.
     // Usually this means there was an error in calculating H.
-    if(w > 7000 || h > 7000){
-        fprintf(stderr, "output too big, stopping\n");
-        return copy_image(a);
-    }
+    // if(w > 7000 || h > 7000){
+    //     fprintf(stderr, "output too big, stopping\n");
+    //     return copy_image(a);
+    // }
 
     int i,j,k;
     image c = make_image(w, h, a.c);
@@ -475,7 +474,7 @@ image panorama_image(image a, image b, float sigma, float thresh, int nms, float
     // Run RANSAC to find the homography
     matrix H = RANSAC(m, mn, inlier_thresh, iters, cutoff);
 
-    if(1){
+    if(0){
         // Mark corners and matches between images
         mark_corners(a, ad, an);
         mark_corners(b, bd, bn);
@@ -492,6 +491,16 @@ image panorama_image(image a, image b, float sigma, float thresh, int nms, float
     return comb;
 }
 
+static point* cylinder_point(float xc, float yc, float f, point* p) {
+    double theta = ((double)p->x - xc) / f;
+    double xp = sin(theta);
+    double yp = ((double)p->y - yc) / f;
+    double zp = cos(theta);
+    p->x = f * xp / zp + xc;
+    p->y = f * yp / zp + yc;
+    return p;
+}
+
 // Project an image onto a cylinder.
 // image im: image to project.
 // float f: focal length used to take image (in pixels).
@@ -499,6 +508,30 @@ image panorama_image(image a, image b, float sigma, float thresh, int nms, float
 image cylindrical_project(image im, float f)
 {
     //TODO: project image onto a cylinder
-    image c = copy_image(im);
+    int xc = im.w / 2, yc = im.h / 2;
+    int dx = 0, px; // deliberately make dx one larger than the value making px == 0
+    do {
+        double theta = ((double)dx++ - xc) / f;
+        px = f * sin(theta) / cos(theta) + xc;
+    } while(px < 0);
+    int dy = 0, py;
+    do {
+        double theta = ((double)dx++ - xc) / f;
+        double yp = ((double)++dy - yc) / f;
+        double zp = cos(theta);
+        py = f * yp / zp + yc;
+    } while(py < 0);
+    image c = make_image(im.w - 2 * dx, im.h - dy, im.c);
+    point tmp;
+    for (int k = 0; k < c.c; ++k) {
+        FOREACH_PIXEL(c, {
+            tmp.x = i + dx;
+            tmp.y = j + dy;
+            cylinder_point(xc, yc, f, &tmp);
+            if (tmp.x >= 0 && tmp.x < im.w && tmp.y >= 0) {
+                set_pixel(c, i, j, k, bilinear_interpolate(im, tmp.x, tmp.y, k));
+            }
+        }); 
+    }
     return c;
 }

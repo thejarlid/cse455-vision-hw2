@@ -123,8 +123,8 @@ image smooth_image(image im, float sigma)
         g.w = 1;
         image s2 = convolve_image(s1, g, 1);
         double k = 1 / (TWOPI * SQUARE(sigma));
-        for (int i = 0; i < s1.w * s1.h; ++i) {
-            s1.data[i] *= k;
+        for (int i = 0; i < s2.w * s2.h; ++i) {
+            s2.data[i] *= k;
         }
         free_image(g);
         free_image(s1);
