@@ -509,28 +509,32 @@ image cylindrical_project(image im, float f)
 {
     //TODO: project image onto a cylinder
     int xc = im.w / 2, yc = im.h / 2;
-    int dx = 0, px; // deliberately make dx one larger than the value making px == 0
+    int lx = -1, rx = im.w, px;
     do {
-        double theta = ((double)dx++ - xc) / f;
+        double theta = ((double)++lx - xc) / f;
         px = f * sin(theta) / cos(theta) + xc;
     } while(px < 0);
-    int dy = 0, py;
     do {
-        double theta = ((double)dx++ - xc) / f;
-        double yp = ((double)++dy - yc) / f;
-        double zp = cos(theta);
-        py = f * yp / zp + yc;
+        double theta = ((double)--rx - xc) / f;
+        px = f * sin(theta) / cos(theta) + xc;
+    } while(px >= im.w);
+    int ty = -1, by = im.h, py;
+    do {
+        double yp = ((double)++ty - yc) / f;
+        py = f * yp + yc;
     } while(py < 0);
-    image c = make_image(im.w - 2 * dx, im.h - dy, im.c);
+    do {
+        double yp = ((double)--by - yc) / f;
+        py = f * yp + yc;
+    } while(py >= im.h);
+    image c = make_image(rx - lx + 1, by - ty + 1, im.c);
     point tmp;
     for (int k = 0; k < c.c; ++k) {
         FOREACH_PIXEL(c, {
-            tmp.x = i + dx;
-            tmp.y = j + dy;
+            tmp.x = i + lx;
+            tmp.y = j + ty;
             cylinder_point(xc, yc, f, &tmp);
-            if (tmp.x >= 0 && tmp.x < im.w && tmp.y >= 0) {
-                set_pixel(c, i, j, k, bilinear_interpolate(im, tmp.x, tmp.y, k));
-            }
+            set_pixel(c, i, j, k, bilinear_interpolate(im, tmp.x, tmp.y, k));
         }); 
     }
     return c;
