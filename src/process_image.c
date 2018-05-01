@@ -14,16 +14,16 @@ float get_pixel(image im, int x, int y, int c)
     // TODO Fill this in
     clamp(&x, 0, im.w - 1);
     clamp(&y, 0, im.h - 1);
-    clamp(&c, 0, 2);
+    clamp(&c, 0, im.c - 1);
     return im.data[c * im.w * im.h + y * im.w + x];
 }
 
 void set_pixel(image im, int x, int y, int c, float v)
 {
     // TODO Fill this in
-    if (x < 0 || x > im.w) return;
-    if (y < 0 || y > im.h) return;
-    if (c < 0 || c > im.c) return;
+    if (x < 0 || x >= im.w) return;
+    if (y < 0 || y >= im.h) return;
+    if (c < 0 || c >= im.c) return;
     im.data[c * im.w * im.h + y * im.w + x] = v;
 }
 
